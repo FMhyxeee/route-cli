@@ -7,9 +7,9 @@ use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "codex-route",
+    name = "route-cli",
     version,
-    about = "Run Codex CLI with scoped VPN proxy forwarding"
+    about = "Run any CLI command with process-scoped proxy routing"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -18,6 +18,10 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    InstallCore {
+        #[arg(long)]
+        url: Option<String>,
+    },
     LoginSub {
         #[arg(long)]
         url: String,
@@ -43,6 +47,7 @@ async fn main() {
 
     let cli = Cli::parse();
     let result = match cli.command {
+        Commands::InstallCore { url } => commands::cmd_install_core(url).await.map(|_| 0),
         Commands::LoginSub { url } => commands::cmd_login_sub(url).await.map(|_| 0),
         Commands::Update => commands::cmd_update().await.map(|_| 0),
         Commands::ListNodes => commands::cmd_list_nodes().await.map(|_| 0),

@@ -89,7 +89,7 @@ pub async fn download_subscription(url: &str, paths: &AppPaths) -> Result<String
 pub fn read_cached_subscription(paths: &AppPaths) -> Result<String> {
     if !paths.subscription_yaml.exists() {
         bail!(
-            "Subscription cache not found at {}. Run `codex-route update` first.",
+            "Subscription cache not found at {}. Run `route-cli update` first.",
             paths.subscription_yaml.display()
         );
     }

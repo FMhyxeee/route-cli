@@ -1,12 +1,12 @@
-# codex-route
+# route-cli
 
-`codex-route` is a Windows-first Rust CLI for running `Codex CLI` through a scoped proxy path.
-It does not change system-wide proxy settings or system routes.
+`route-cli` is a Windows-first Rust CLI for running any target CLI command through a process-scoped proxy.
+It does not change system-wide proxy settings or routes.
 
 ## Why this tool
 
-In many enterprise networks, you need proxy/VPN access for public services, but full-tunnel VPN breaks internal resources.
-`codex-route` solves this by applying proxy settings only to the target process tree (for example, `codex`), not the whole OS.
+In enterprise networks, full-tunnel VPN often breaks internal resources.
+`route-cli` applies proxy env vars only to the target process tree (for example `codex`, `claude`, or other CLIs).
 
 ## What it does
 
@@ -16,24 +16,16 @@ In many enterprise networks, you need proxy/VPN access for public services, but 
 - Selects nodes automatically or manually
 - Generates `sing-box` runtime config
 - Starts local `sing-box` proxy core
-- Launches the target command with process-scoped proxy env vars:
-  - `HTTP_PROXY`
-  - `HTTPS_PROXY`
-  - `ALL_PROXY`
-  - `NO_PROXY`
+- Launches target command with scoped env vars: `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`
 
 ## Node selection behavior
 
-When you run `codex-route run -- <command>`:
+When you run `route-cli run -- <command>`:
 
-1. If `runtime.selected_node` exists, it tries that node first.
-2. Remaining nodes are sorted by region priority:
-   - Singapore
-   - Korea
-   - United States
-   - Others
-3. Each candidate is checked with `ping` before use.
-4. The first reachable node is selected and persisted as `runtime.selected_node`.
+1. If `runtime.selected_node` exists, try it first.
+2. Remaining nodes are sorted by region priority: Singapore, Korea, United States, Others.
+3. Each candidate is checked by `ping`.
+4. The first reachable node is selected and persisted.
 
 ## Supported Clash node types
 
@@ -46,12 +38,12 @@ When you run `codex-route run -- <command>`:
 Current limitations:
 
 - `ss` with plugin fields is not supported yet.
-- `vmess` supports common `tcp/ws/grpc` mappings; advanced variants may need extra mapping.
+- `vmess` supports common `tcp/ws/grpc`; advanced variants may need extra mapping.
 
 ## Project layout
 
 ```text
-codex-route/
+route-cli/
   Cargo.toml
   src/
   tools/
@@ -61,91 +53,74 @@ codex-route/
 
 Recommended distribution bundle:
 
-- `codex-route.exe`
+- `route-cli.exe`
 - `tools/sing-box/sing-box.exe`
-- `tools/sing-box/*.dll` (if required by the downloaded build)
+- `tools/sing-box/*.dll` (if required by your build)
 
 ## Requirements
 
 - Windows
-- Rust toolchain (for building from source)
-- `codex` CLI installed and available from terminal
-- `sing-box` binary (bundled or on PATH)
+- Rust toolchain (if building from source)
+- target CLI installed and available in terminal
+- `sing-box` binary (installed via `route-cli install-core`, bundled, or on PATH)
 
 ## Build
 
 ```powershell
-cd D:\WorkSpace\ai-lab\codex-route
 cargo build
 ```
 
 ## Quick start
 
-1. Save subscription URL:
+1. Install proxy core:
+
+```powershell
+cargo run -- install-core
+```
+
+`install-core` first tries local `tools/sing-box`; if not found, it downloads latest Windows AMD64 release from GitHub.
+
+2. Save subscription URL:
 
 ```powershell
 cargo run -- login-sub --url "https://example.com/subscription.yaml"
 ```
 
-2. Pull and cache subscription:
+3. Pull and cache subscription:
 
 ```powershell
 cargo run -- update
 ```
 
-3. List nodes:
-
-```powershell
-cargo run -- list-nodes
-```
-
-4. Optional: manually pick a node:
+4. Optional: pick a node manually:
 
 ```powershell
 cargo run -- use-node "your-node-name"
 ```
 
-5. Run Codex through scoped proxy:
+5. Run target command through scoped proxy:
 
 ```powershell
 cargo run -- run -- codex
-```
-
-## Login flow (device auth recommended)
-
-If browser callback/jump is inconvenient in your network, use device auth:
-
-```powershell
-cargo run -- run -- codex login --device-auth
-```
-
-Flow:
-
-1. Terminal prints verification URL + device code.
-2. Open the URL from any internet-capable browser (desktop or mobile).
-3. Enter device code and approve.
-4. Return to terminal and wait for completion.
-
-Check login status:
-
-```powershell
-cargo run -- run -- codex login status
+cargo run -- run -- claude
 ```
 
 ## Commands
 
 ```text
-codex-route login-sub --url <SUB_URL>
-codex-route update
-codex-route list-nodes
-codex-route use-node <NODE_NAME>
-codex-route run -- <COMMAND...>
-codex-route doctor
+route-cli install-core [--url <ZIP_URL>]
+route-cli login-sub --url <SUB_URL>
+route-cli update
+route-cli list-nodes
+route-cli use-node <NODE_NAME>
+route-cli run -- <COMMAND...>
+route-cli doctor
 ```
 
 Dev mode equivalents:
 
 ```text
+cargo run -- install-core -- [--url <ZIP_URL>]
 cargo run -- login-sub --url <SUB_URL>
 cargo run -- update
 cargo run -- list-nodes
@@ -158,7 +133,7 @@ cargo run -- doctor
 
 On Windows:
 
-`%APPDATA%\codex-route`
+`%APPDATA%\route`
 
 Files:
 
@@ -169,7 +144,7 @@ Files:
 Main `config.toml` keys:
 
 - `subscription.url`
-- `proxy_core.path` (default: `tools/sing-box/sing-box.exe`)
+- `proxy_core.path` (default: `sing-box.exe`)
 - `proxy.mixed_port` (default: `27890`)
 - `routing.proxy_domains`
 - `routing.no_proxy`
@@ -177,11 +152,11 @@ Main `config.toml` keys:
 
 ## sing-box path resolution order
 
-`codex-route` resolves proxy core in this order:
+`route-cli` resolves proxy core in this order:
 
 1. `proxy_core.path` (absolute or relative)
-2. `tools/sing-box/sing-box.exe` (relative to current working dir or executable dir)
-3. `sing-box.exe` from PATH (fallback)
+2. If `proxy_core.path = "sing-box.exe"`, try `tools/sing-box/sing-box.exe`
+3. `sing-box.exe` from PATH
 
 Run diagnostics:
 
@@ -193,49 +168,25 @@ cargo run -- doctor
 
 ### Error: `No subscription URL configured`
 
-Run:
-
 ```powershell
-cargo run -- login-sub --url "<your-subscription-url>"
+route-cli login-sub --url "<your-subscription-url>"
 ```
 
-### Error: `Failed to start command 'codex': program not found`
+### Error: `Failed to start command ...: program not found`
 
-Verify:
-
-- Codex CLI is installed
-- `codex --version` works in the current terminal
+Verify your target CLI is installed and callable in current terminal.
 
 ### Error: `proxy core unavailable`
 
 Verify:
 
-- `tools/sing-box/sing-box.exe` exists
-- or set `proxy_core.path` to an absolute valid path
-
-### Many nodes but still cannot connect
-
-Check:
-
-- subscription is valid
-- network can reach node servers
-- `ping` is not blocked by local policy/firewall
-
-### Config appears lost after rename/migration
-
-If project/app name changed, config folder may also change (for example `codex-vpn` -> `codex-route`).
-Re-run `login-sub` in the new app context.
+- `sing-box.exe` is available in PATH (for example: `winget install SagerNet.sing-box`)
+- or `tools/sing-box/sing-box.exe` exists
+- or set `proxy_core.path` to an absolute path
 
 ## Security and scope
 
 - No system-wide proxy modifications
 - No system route modifications
-- Proxy env vars only apply to the spawned process tree
-- Tunnel and forwarding are handled by `sing-box`; `codex-route` orchestrates policy and process lifecycle
-
-## Development
-
-```powershell
-cargo fmt --all
-cargo check
-```
+- Env vars apply only to the spawned process tree
+- `sing-box` handles tunnel/forwarding; `route-cli` handles orchestration and policy

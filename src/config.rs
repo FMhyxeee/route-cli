@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+const APP_DIR: &str = "route";
+const LEGACY_APP_DIR: &str = "codex-route";
 const DEFAULT_PROXY_DOMAINS: [&str; 6] = [
     "openai.com",
     "api.openai.com",
@@ -53,7 +55,7 @@ impl Default for AppConfig {
         Self {
             subscription: SubscriptionConfig { url: None },
             proxy_core: ProxyCoreConfig {
-                path: "tools/sing-box/sing-box.exe".to_string(),
+                path: "sing-box.exe".to_string(),
             },
             proxy: LocalProxyConfig { mixed_port: 27890 },
             routing: RoutingConfig {
@@ -81,7 +83,8 @@ pub struct AppPaths {
 impl AppPaths {
     pub fn discover() -> Result<Self> {
         let appdata = dirs::config_dir().context("Unable to locate config directory")?;
-        let root = appdata.join("codex-route");
+        let root = appdata.join(APP_DIR);
+        migrate_legacy_root(&appdata, &root)?;
         let config_toml = root.join("config.toml");
         let subscription_yaml = root.join("cache").join("subscription.yaml");
         let generated_dir = root.join("generated");
@@ -107,6 +110,53 @@ fn ensure_parent(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create {}", parent.display()))?;
+    }
+    Ok(())
+}
+
+fn migrate_legacy_root(appdata: &Path, new_root: &Path) -> Result<()> {
+    if new_root.exists() {
+        return Ok(());
+    }
+
+    let legacy_root = appdata.join(LEGACY_APP_DIR);
+    if !legacy_root.exists() {
+        return Ok(());
+    }
+
+    copy_dir_recursive(&legacy_root, new_root).with_context(|| {
+        format!(
+            "Failed to migrate legacy config from {} to {}",
+            legacy_root.display(),
+            new_root.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+    fs::create_dir_all(dst).with_context(|| format!("Failed to create {}", dst.display()))?;
+    for entry in
+        fs::read_dir(src).with_context(|| format!("Failed to read directory {}", src.display()))?
+    {
+        let entry = entry
+            .with_context(|| format!("Failed to read directory entry in {}", src.display()))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("Failed to get type for {}", src_path.display()))?;
+        if file_type.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else if file_type.is_file() {
+            fs::copy(&src_path, &dst_path).with_context(|| {
+                format!(
+                    "Failed to copy {} to {}",
+                    src_path.display(),
+                    dst_path.display()
+                )
+            })?;
+        }
     }
     Ok(())
 }
@@ -183,4 +233,80 @@ pub fn resolve_proxy_core_path(configured_path: &str) -> String {
     }
 
     configured_path.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::{copy_dir_recursive, migrate_legacy_root};
+
+    fn make_temp_dir(prefix: &str) -> std::path::PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should be valid")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("{prefix}-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&path).expect("temp dir should be creatable");
+        path
+    }
+
+    #[test]
+    fn migrates_legacy_config_when_new_root_missing() {
+        let appdata = make_temp_dir("route-cli-migrate");
+        let legacy = appdata.join("codex-route");
+        let new_root = appdata.join("route");
+        std::fs::create_dir_all(legacy.join("cache")).expect("legacy cache dir should be created");
+        std::fs::write(legacy.join("config.toml"), "x = 1")
+            .expect("legacy config should be written");
+        std::fs::write(
+            legacy.join("cache").join("subscription.yaml"),
+            "proxies: []",
+        )
+        .expect("legacy cache should be written");
+
+        migrate_legacy_root(&appdata, &new_root).expect("migration should succeed");
+
+        assert!(new_root.join("config.toml").exists());
+        assert!(new_root.join("cache").join("subscription.yaml").exists());
+    }
+
+    #[test]
+    fn does_not_override_when_new_root_exists() {
+        let appdata = make_temp_dir("route-cli-preserve");
+        let legacy = appdata.join("codex-route");
+        let new_root = appdata.join("route");
+        std::fs::create_dir_all(&legacy).expect("legacy dir should be created");
+        std::fs::create_dir_all(&new_root).expect("new root should be created");
+        std::fs::write(legacy.join("config.toml"), "legacy = true")
+            .expect("legacy config should be written");
+        std::fs::write(new_root.join("config.toml"), "new = true")
+            .expect("new config should be written");
+
+        migrate_legacy_root(&appdata, &new_root).expect("migration should not fail");
+
+        let new_cfg = std::fs::read_to_string(new_root.join("config.toml"))
+            .expect("new config should remain readable");
+        assert_eq!(new_cfg, "new = true");
+    }
+
+    #[test]
+    fn copies_nested_directories() {
+        let src = make_temp_dir("route-cli-copy-src");
+        let dst = make_temp_dir("route-cli-copy-dst");
+        let src_root = src.join("root");
+        let dst_root = dst.join("root");
+        std::fs::create_dir_all(src_root.join("nested"))
+            .expect("source nested dir should be created");
+        std::fs::write(src_root.join("nested").join("a.txt"), "ok")
+            .expect("source file should be written");
+
+        copy_dir_recursive(&src_root, &dst_root).expect("recursive copy should succeed");
+
+        assert_eq!(
+            std::fs::read_to_string(dst_root.join("nested").join("a.txt"))
+                .expect("copied file should be readable"),
+            "ok"
+        );
+    }
 }
